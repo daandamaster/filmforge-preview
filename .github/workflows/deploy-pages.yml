@@ -1,24 +1,17 @@
 name: Deploy preview to GitHub Pages
 
 on:
-  push:
-    branches: [gh-pages]
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
-  group: pages
+  group: pages-publish
   cancel-in-progress: true
 
 jobs:
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+  publish:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout gh-pages
@@ -26,49 +19,33 @@ jobs:
         with:
           ref: gh-pages
 
-      - name: Check payload complete
-        id: ready
-        run: |
-          if [ -f payload/COMPLETE ]; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "payload not complete yet"
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Reconstruct site
-        if: steps.ready.outputs.ready == 'true'
+      - name: Reconstruct site and commit binaries
         run: |
           set -euo pipefail
+          test -f payload/COMPLETE
           expected=$(awk -F= '/^sha256=/{print $2}' payload/COMPLETE)
           parts=$(awk -F= '/^parts=/{print $2}' payload/COMPLETE)
-          mkdir -p _site
+          mkdir -p _unpack
           cat payload/part-* | base64 -d > "$RUNNER_TEMP/site.tgz"
           actual=$(sha256sum "$RUNNER_TEMP/site.tgz" | awk '{print $1}')
           echo "expected=$expected"
           echo "actual=$actual"
           test "$expected" = "$actual"
           test "$(ls payload/part-* | wc -l)" -eq "$parts"
-          tar -xzf "$RUNNER_TEMP/site.tgz" -C _site
-          test -f _site/index.html
-          test -f _site/404.html
-          test -f _site/sw.js
-          test -f _site/manifest.webmanifest
-          test -f _site/stormvloed-demo.mp4
-          test -f _site/.nojekyll
-          ls -la _site
-
-      - name: Setup Pages
-        if: steps.ready.outputs.ready == 'true'
-        uses: actions/configure-pages@v5
-
-      - name: Upload artifact
-        if: steps.ready.outputs.ready == 'true'
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: _site
-
-      - name: Deploy to GitHub Pages
-        if: steps.ready.outputs.ready == 'true'
-        id: deployment
-        uses: actions/deploy-pages@v4
+          tar -xzf "$RUNNER_TEMP/site.tgz" -C _unpack
+          test -f _unpack/index.html
+          test -f _unpack/stormvloed-demo.mp4
+          test -f _unpack/hero-still.jpg
+          test -f _unpack/sw.js
+          test -f _unpack/manifest.webmanifest
+          cp -a _unpack/. .
+          rm -rf _unpack
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to publish"
+          else
+            git commit -m "Publish reconstructed FilmForge preview site"
+            git push
+          fi
