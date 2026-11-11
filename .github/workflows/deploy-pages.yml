@@ -25,12 +25,50 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: gh-pages
+
+      - name: Check payload complete
+        id: ready
+        run: |
+          if [ -f payload/COMPLETE ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "payload not complete yet"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Reconstruct site
+        if: steps.ready.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          expected=$(awk -F= '/^sha256=/{print $2}' payload/COMPLETE)
+          parts=$(awk -F= '/^parts=/{print $2}' payload/COMPLETE)
+          mkdir -p _site
+          cat payload/part-* | base64 -d > "$RUNNER_TEMP/site.tgz"
+          actual=$(sha256sum "$RUNNER_TEMP/site.tgz" | awk '{print $1}')
+          echo "expected=$expected"
+          echo "actual=$actual"
+          test "$expected" = "$actual"
+          test "$(ls payload/part-* | wc -l)" -eq "$parts"
+          tar -xzf "$RUNNER_TEMP/site.tgz" -C _site
+          test -f _site/index.html
+          test -f _site/404.html
+          test -f _site/sw.js
+          test -f _site/manifest.webmanifest
+          test -f _site/stormvloed-demo.mp4
+          test -f _site/.nojekyll
+          ls -la _site
+
       - name: Setup Pages
+        if: steps.ready.outputs.ready == 'true'
         uses: actions/configure-pages@v5
+
       - name: Upload artifact
+        if: steps.ready.outputs.ready == 'true'
         uses: actions/upload-pages-artifact@v3
         with:
-          path: .
+          path: _site
+
       - name: Deploy to GitHub Pages
+        if: steps.ready.outputs.ready == 'true'
         id: deployment
         uses: actions/deploy-pages@v4
